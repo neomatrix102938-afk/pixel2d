@@ -1,0 +1,40 @@
+services:
+  game:
+    image: python:3.12-slim-bookworm
+    working_dir: /app/pixel2d0.1
+    volumes:
+      - .:/app
+      - ./.base44/index.html:/usr/share/novnc/index.html:ro
+    ports:
+      - "3000:3000"
+    environment:
+      DISPLAY: ":99"
+      SDL_AUDIODRIVER: dummy
+      PYTHONUNBUFFERED: "1"
+    command:
+      - sh
+      - -ec
+      - |
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb x11vnc x11-utils novnc websockify >/dev/null
+        pip install --disable-pip-version-check -q -r requirements.txt watchdog
+        Xvfb :99 -screen 0 960x600x24 -ac &
+        until xdpyinfo -display :99 >/dev/null 2>&1; do sleep 0.2; done
+        x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -quiet &
+        websockify --web=/usr/share/novnc 0.0.0.0:3000 localhost:5900 &
+        while true; do
+          watchmedo auto-restart --directory=/app/pixel2d0.1 --pattern='*.py' -- python -u main.py
+          sleep 1
+        done
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; assert urllib.request.urlopen('http://localhost:3000/vnc.html', timeout=3).status == 200" &&
+          xwininfo -root -tree | grep -q 'Pixel Platformer\|HELP ME' &&
+          python -c "import socket; s=socket.create_connection(('localhost', 5900), 3); assert s.recv(3) == b'RFB'; s.close()"
+      interval: 15s
+      timeout: 8s
+      start_period: 120s
+      retries: 3
+    restart: on-failure
